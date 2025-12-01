@@ -337,7 +337,7 @@ if 'last_uploaded_file_id' not in st.session_state:
 
 example_banks = load_example_banks()
 
-st.title("🤖 Test Question Generator V3")
+st.title("🤖 Test Question Generator V4")
 st.caption("Three-stage pipeline with simplified generation and binary validation")
 
 if example_banks is None:
