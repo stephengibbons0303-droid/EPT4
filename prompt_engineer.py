@@ -1,0 +1,463 @@
+import json
+import random
+import pandas as pd
+import re
+
+# --------------------------------------------------------------------------
+# Helper: Get Examples
+# --------------------------------------------------------------------------
+def get_few_shot_examples(job, example_banks):
+    """
+    Retrieves 2-3 examples from the CSV based on CEFR and Type.
+    """
+    bank = example_banks.get(job['type'].lower())
+    if bank is None or bank.empty: 
+        return ""
+    
+    bank.columns = [c.strip() for c in bank.columns]
+    
+    if 'CEFR rating' in bank.columns:
+        relevant = bank[bank['CEFR rating'].astype(str).str.strip() == str(job['cefr']).strip()]
+    else:
+        relevant = bank
+
+    if len(relevant) >= 2:
+        samples = relevant.sample(2)
+    elif len(bank) >= 2:
+        samples = bank.sample(2) 
+    else:
+        return "" 
+
+    output = ""
+    for _, row in samples.iterrows():
+        ex_dict = {
+            "Question Prompt": row.get("Question Prompt", "N/A"),
+            "Answer A": row.get("Answer A", "N/A"),
+            "Answer B": row.get("Answer B", "N/A"),
+            "Answer C": row.get("Answer C", "N/A"),
+            "Answer D": row.get("Answer D", "N/A"),
+            "Correct Answer": row.get("Correct Answer", "N/A")
+        }
+        output += "### EXAMPLE:\n" + json.dumps(ex_dict) + "\n\n"
+    return output
+
+# =============================================================================
+# HELPER FUNCTIONS FOR VOCABULARY SELECTION
+# =============================================================================
+
+def clean_vocab_item(text):
+    """
+    Aggressively cleans vocabulary items for distractor generation.
+    - 'build/built/built' -> 'build'
+    - 'belong (to)' -> 'belong'
+    """
+    if not isinstance(text, str):
+        return str(text)
+    
+    # Take first option if slashes exist (build/built -> build)
+    if '/' in text:
+        text = text.split('/')[0]
+        
+    # Remove parentheses and content (belong (to) -> belong)
+    text = re.sub(r'\([^)]*\)', '', text)
+    
+    return text.strip()
+
+def get_first_word(vocab_item):
+    """Extract the first word from multi-word vocabulary items."""
+    cleaned = clean_vocab_item(vocab_item)
+    words = cleaned.split()
+    return words[0] if words else cleaned
+
+def get_initial_letter(vocab_item):
+    """Get the first letter of the first word."""
+    first_word = get_first_word(vocab_item)
+    return first_word[0].lower() if first_word else ''
+
+def get_phonetic_similar_letters(letter):
+    """Return phonetically similar letters for fallback matching."""
+    phonetic_groups = {
+        'c': ['k', 'q'], 'k': ['c', 'q'], 'q': ['c', 'k'],
+        's': ['c', 'z'], 'z': ['s'],
+        'f': ['ph'], 'ph': ['f'],
+        'j': ['g'], 'g': ['j'],
+        'i': ['y'], 'y': ['i'],
+        'b': ['p'], 'p': ['b'], 
+        'd': ['t'], 't': ['d'],
+        'v': ['f', 'w']
+    }
+    return phonetic_groups.get(letter.lower(), [])
+
+def python_select_by_pos(vocab_df, target_vocab, target_pos, max_items=4):
+    """
+    Select distractors by matching part of speech.
+    Returns CLEANED items.
+    """
+    target_vocab_clean = clean_vocab_item(target_vocab).lower()
+    target_pos_lower = target_pos.lower().strip()
+    
+    # Filter by same part of speech
+    same_pos = vocab_df[
+        vocab_df['Part of Speech'].str.lower().str.strip() == target_pos_lower
+    ]
+    
+    # Filter out target
+    same_pos = same_pos[
+        same_pos['Base Vocabulary Item'].apply(clean_vocab_item).str.lower() != target_vocab_clean
+    ]
+    
+    if len(same_pos) >= max_items:
+        selected = same_pos.sample(n=max_items)
+    else:
+        selected = same_pos
+    
+    # Return cleaned items
+    return [clean_vocab_item(x) for x in selected['Base Vocabulary Item'].tolist()]
+
+def python_select_by_initial_letter(vocab_df, target_vocab, max_items=4, exclude_items=None):
+    """
+    Select distractors by matching initial letter of first word (with phonetic fallback).
+    Returns CLEANED items.
+    """
+    if exclude_items is None:
+        exclude_items = []
+    
+    target_vocab_clean = clean_vocab_item(target_vocab)
+    target_letter = get_initial_letter(target_vocab_clean)
+    
+    # Helper to check letter match
+    def matches_initial_letter(vocab_item):
+        return get_initial_letter(vocab_item) == target_letter
+    
+    same_letter = vocab_df[
+        vocab_df['Base Vocabulary Item'].apply(matches_initial_letter)
+    ]
+    
+    # Exclude target and already selected
+    exclude_clean = [clean_vocab_item(x).lower() for x in exclude_items + [target_vocab]]
+    same_letter = same_letter[
+        ~same_letter['Base Vocabulary Item'].apply(clean_vocab_item).str.lower().isin(exclude_clean)
+    ]
+    
+    # Selection logic
+    if len(same_letter) >= max_items:
+        selected = same_letter.sample(n=max_items)
+        return [clean_vocab_item(x) for x in selected['Base Vocabulary Item'].tolist()]
+    
+    # Fallback logic (Phonetic)
+    candidates = [clean_vocab_item(x) for x in same_letter['Base Vocabulary Item'].tolist()]
+    phonetic_letters = get_phonetic_similar_letters(target_letter)
+    
+    for phon_letter in phonetic_letters:
+        if len(candidates) >= max_items:
+            break
+        
+        def matches_phonetic_letter(vocab_item):
+            return get_initial_letter(vocab_item) == phon_letter
+        
+        phonetic_matches = vocab_df[
+            vocab_df['Base Vocabulary Item'].apply(matches_phonetic_letter)
+        ]
+        
+        # Filter exclusions again
+        phonetic_matches = phonetic_matches[
+            ~phonetic_matches['Base Vocabulary Item'].apply(clean_vocab_item).str.lower().isin(exclude_clean + [c.lower() for c in candidates])
+        ]
+        
+        needed = max_items - len(candidates)
+        if len(phonetic_matches) > 0:
+            additional = phonetic_matches.sample(n=min(needed, len(phonetic_matches)))
+            candidates.extend([clean_vocab_item(x) for x in additional['Base Vocabulary Item'].tolist()])
+    
+    return candidates[:max_items]
+
+# =============================================================================
+# STAGE 1: SENTENCE GENERATION (With Inflection Instruction)
+# =============================================================================
+
+def create_vocab_list_stage1_prompt(job_list, question_form):
+    """
+    Generates complete sentences. 
+    Crucial: Generates the INFLECTED correct answer.
+    """
+    question_form_instructions = {
+        "Random Mix": "Use diverse question forms.",
+        "Simple gap fill": """ALL questions must use simple gap fill format. Example: "Our new sidewalk is made of ___________." """,
+        "Definition through function/description": "ALL questions must use definition through function/description format.",
+        "Cause-Effect completion": "ALL questions must use cause-effect completion format.",
+        "Dialogue completion": "ALL questions must use dialogue completion format.",
+        "Logical relationship completion": "ALL questions must use logical relationship completion format."
+    }
+    
+    form_instruction = question_form_instructions.get(question_form, question_form_instructions["Random Mix"])
+    
+    system_msg = f"""You are an expert ELT content creator. You will generate exactly {len(job_list)} complete test questions in a single JSON response targeting specific vocabulary items.
+
+CRITICAL: Your entire response must be a JSON object with a "questions" key containing an array of exactly {len(job_list)} question objects."""
+    
+    job_specs = []
+    for job in job_list:
+        # Clean target for the prompt
+        target_vocab = clean_vocab_item(job['target_vocabulary'])
+        
+        job_specs.append({
+            "job_id": job['job_id'],
+            "cefr": job['cefr'],
+            "target_vocabulary": target_vocab,
+            "definition": job.get('definition', ''),
+            "part_of_speech": job.get('part_of_speech', '')
+        })
+ 
+    user_msg = f"""
+TASK: Create exactly {len(job_list)} vocabulary test questions.
+
+VOCABULARY TARGETS:
+{json.dumps(job_specs, indent=2)}
+
+{form_instruction}
+
+GENERATION INSTRUCTIONS:
+1. **CONTEXT:** Create a natural sentence where the target word fits perfectly.
+2. **INFLECTION (CRITICAL):** 
+   - You MUST inflect the target word to match the sentence grammar.
+   - If the sentence is past tense, "blow" MUST become "blew".
+   - The "Correct Answer" field MUST contain the INFLECTED form.
+3. **CLARITY:** Ensure the context makes the meaning clear without definitions.
+
+MANDATORY OUTPUT FORMAT:
+{{
+  "questions": [
+    {{
+      "Item Number": "...",
+      "Target Vocabulary": "...",
+      "Complete Sentence": "...",
+      "Correct Answer": "...[INFLECTED FORM]...",
+      "Context Clue Location": "...",
+      "Context Clue Explanation": "...",
+      "CEFR rating": "...",
+      "Category": "Vocabulary"
+    }},
+    ... 
+  ]
+}}
+"""
+    return system_msg, user_msg
+
+# =============================================================================
+# STAGE 2: CANDIDATE GENERATION (With Morphological Adaptation)
+# =============================================================================
+
+def create_vocab_list_stage2_prompt(job_list, stage1_outputs, vocabulary_list_df):
+    """
+    Generates candidates.
+    CRITICAL: Forces LLM to inflect the Python-selected candidates.
+    """
+    system_msg = f"""You are an expert ELT test designer. You will create exactly 8 candidate distractors for exactly {len(job_list)} questions.
+    
+CRITICAL: You must ADAPT the input words to match the grammatical context of the sentences."""
+    
+    pre_selected_data = []
+    
+    for i, job in enumerate(job_list):
+        stage1_data = stage1_outputs[i]
+        target_vocab = clean_vocab_item(job['target_vocabulary'])
+        target_pos = job['part_of_speech']
+        
+        # PYTHON SELECTION (Cleaned items)
+        pos_selected = python_select_by_pos(
+            vocabulary_list_df, target_vocab, target_pos, max_items=4
+        )
+        
+        letter_selected = python_select_by_initial_letter(
+            vocabulary_list_df, target_vocab, max_items=4, exclude_items=pos_selected
+        )
+        
+        total_python = len(pos_selected) + len(letter_selected)
+        needed_from_llm = max(0, 8 - total_python)
+        
+        pre_selected_data.append({
+            "Item Number": stage1_data.get("Item Number"),
+            "Target (Base)": target_vocab,
+            "Complete Sentence": stage1_data.get("Complete Sentence"),
+            "Correct Answer (In Sentence)": stage1_data.get("Correct Answer"),
+            "Raw Candidates (from Database)": pos_selected + letter_selected,
+            "Additional Candidates Needed": needed_from_llm
+        })
+    
+    user_msg = f"""
+TASK: Create a final pool of exactly 8 candidates for each question.
+
+INPUT DATA:
+{json.dumps(pre_selected_data, indent=2)}
+
+INSTRUCTIONS FOR CANDIDATE GENERATION:
+
+1. **SOURCE MATERIAL:** 
+   - Start with the "Raw Candidates (from Database)".
+   - Generate "Additional Candidates" to reach exactly 8 total.
+   - Priority for additional candidates: Antonyms of target, then synonyms of the raw candidates.
+
+2. **MORPHOLOGICAL ADAPTATION (CRITICAL):** 
+   - The "Raw Candidates" are in BASE DICTIONARY FORM (e.g., "burn", "slip").
+   - You MUST CONJUGATE/MODIFY these words to match the "Correct Answer (In Sentence)".
+   - **TENSE MATCHING:** If Correct Answer is "blew" (past), "burn" must become "burned".
+   - **NUMBER MATCHING:** If Correct Answer is "apples", "fruit" must become "fruits".
+   - **FORM MATCHING:** If Correct Answer is "running", "walk" must become "walking".
+
+   **EXAMPLE:**
+   - Sentence: "When the movie was over..."
+   - Correct Answer: "was over" (Past)
+   - Raw Candidate: "burn"
+   - **YOUR OUTPUT:** "burned" (Past Tense) -- *Do NOT output "burn"*
+
+3. **CLEANING:**
+   - Ensure all output candidates are single words (unless the distractor is a phrasal verb).
+   - NEVER output slashes (e.g., "build/built/built" -> output "built").
+
+MANDATORY OUTPUT FORMAT:
+{{
+  "candidates": [
+    {{
+      "Item Number": "...",
+      "Candidate A": "...[Adapted/Inflected Item]...",
+      "Candidate B": "...[Adapted/Inflected Item]...",
+      "Candidate C": "...[Adapted/Inflected Item]...",
+      "Candidate D": "...[Adapted/Inflected Item]...",
+      "Candidate E": "...[Adapted/Inflected Item]...",
+      "Candidate F": "...[Adapted/Inflected Item]...",
+      "Candidate G": "...[Adapted/Inflected Item]...",
+      "Candidate H": "...[Adapted/Inflected Item]...",
+      "Transformation Notes": "e.g., Adapted 'burn' to 'burned' to match past tense"
+    }},
+    ... 
+  ]
+}}
+"""
+    return system_msg, user_msg
+
+# =============================================================================
+# STAGE 3: VALIDATION (With Morphological Parity)
+# =============================================================================
+
+def create_vocab_list_stage3_prompt(job_list, stage1_outputs, stage2_outputs):
+    """
+    STAGE THREE: Validation with MORPHOLOGICAL PARITY enforcement.
+    """
+    system_msg = f"""You are an expert English vocabulary validator. You will filter candidate distractors using strict morphological rules."""
+    
+    validation_input = []
+    for i, (job, s1, s2) in enumerate(zip(job_list, stage1_outputs, stage2_outputs)):
+        # Safe extraction of candidates list
+        candidates = []
+        if isinstance(s2, dict):
+            # Try to get candidate fields A-H
+            candidates = [s2.get(f"Candidate {k}", "") for k in "ABCDEFGH"]
+            # Filter out empty strings
+            candidates = [c for c in candidates if c]
+        
+        validation_input.append({
+            "Item Number": s1.get("Item Number", ""),
+            "Complete Sentence": s1.get("Complete Sentence", ""),
+            "Correct Answer": s1.get("Correct Answer", ""),
+            "Candidates": candidates,
+            "Target Word Class": job.get('part_of_speech', 'Unknown')
+        })
+    
+    user_msg = f"""
+TASK: Validate candidates and select the final 3 distractors per question.
+
+INPUT:
+{json.dumps(validation_input, indent=2)}
+
+VALIDATION PROTOCOL (Apply in Order):
+
+**STEP 1: MORPHOLOGICAL PARITY CHECK (The "Shape" Test)**
+Look at the **Correct Answer** to determine the rule:
+
+*   **CASE A: The Correct Answer is INFLECTED** (e.g., "walked", "tables", "going", "happiest", "mice").
+    *   **RULE:** STRICT PARITY. Distractors MUST match the word class and inflection.
+    *   **Action:** REJECT any candidate that is a different part of speech or lacks the matching inflection.
+    *   *Example:* Target "blew" (Past V) -> REJECT "house" (Noun). REJECT "blow" (Base V). ACCEPT "cooked" (Past V).
+
+*   **CASE B: The Correct Answer is BASE FORM** (e.g., "walk", "table", "big").
+    *   **RULE:** LOOSE PARITY. Distractors can be different word classes.
+    *   **Action:** RETAIN candidates from different word classes (e.g., nouns acting as distractors for verbs) as long as they are valid words.
+
+**STEP 2: SEMANTIC & GRAMMATICAL FIT**
+*   **Grammar Check:** For Case A (Inflected), the distractor must fit the sentence grammatically (e.g., "He [verb-ed] the ball").
+*   **Semantic Check:** The distractor must be WRONG in meaning. REJECT valid synonyms that a native speaker might accept.
+
+**STEP 3: FINAL SELECTION**
+*   Select the 3 candidates that survive Step 1 & 2.
+*   Prioritize candidates that look "plausible" to a learner but are definitely wrong.
+
+MANDATORY OUTPUT FORMAT:
+{{
+  "validated": [
+    {{
+      "Item Number": "...",
+      "Selected Distractor A": "...",
+      "Selected Distractor B": "...",
+      "Selected Distractor C": "...",
+      "Validation Notes": "Refers to parity rule applied (e.g., 'Target inflected, rejected noun distractor')."
+    }},
+    ...
+  ]
+}}
+"""
+    return system_msg, user_msg
+
+
+# =============================================================================
+# LEGACY / BATCH FUNCTIONS (Preserved from input)
+# =============================================================================
+
+def create_sequential_batch_stage1_prompt(job_list, example_banks):
+    # This remains unchanged from your existing file
+    examples = get_few_shot_examples(job_list[0], example_banks) if job_list else ""
+    system_msg = f"You are an expert ELT content creator. Generate {len(job_list)} complete test questions. Output valid JSON."
+    
+    job_specs = []
+    for job in job_list:
+        job_specs.append({
+            "job_id": job['job_id'], "cefr": job['cefr'], "focus": job['focus'], "topic": job.get('context', 'General')
+        })
+        
+    user_msg = f"""TASK: Create {len(job_list)} grammar/vocab questions.
+    JOBS: {json.dumps(job_specs, indent=2)}
+    FORMAT: {{ "questions": [ {{ "Item Number": "...", "Complete Sentence": "...", "Correct Answer": "..." }}, ... ] }}
+    STYLE: {examples}"""
+    return system_msg, user_msg
+
+def create_sequential_batch_stage2_grammar_prompt(job_list, stage1_outputs):
+    # Unchanged
+    system_msg = "You are an expert ELT test designer. Generate distractors."
+    user_msg = f"TASK: Generate 5 grammar distractors per question.\nINPUT: {json.dumps(stage1_outputs)}\nFORMAT: {{ 'candidates': [...] }}"
+    return system_msg, user_msg
+
+def create_sequential_batch_stage2_vocabulary_prompt(job_list, stage1_outputs):
+    # Unchanged
+    system_msg = "You are an expert ELT test designer. Generate distractors."
+    user_msg = f"TASK: Generate 5 vocabulary distractors per question.\nINPUT: {json.dumps(stage1_outputs)}\nFORMAT: {{ 'candidates': [...] }}"
+    return system_msg, user_msg
+
+def create_sequential_batch_stage3_grammar_prompt(job_list, stage1_outputs, stage2_outputs):
+    # Unchanged
+    system_msg = "You are an expert Grammar Validator."
+    user_msg = f"TASK: Select 3 distractors.\nINPUT: {json.dumps(stage1_outputs)}\nCANDIDATES: {json.dumps(stage2_outputs)}\nFORMAT: {{ 'validated': [...] }}"
+    return system_msg, user_msg
+
+def create_sequential_batch_stage3_vocabulary_prompt(job_list, stage1_outputs, stage2_outputs):
+    # Unchanged
+    system_msg = "You are an expert Vocabulary Validator."
+    user_msg = f"TASK: Select 3 distractors.\nINPUT: {json.dumps(stage1_outputs)}\nCANDIDATES: {json.dumps(stage2_outputs)}\nFORMAT: {{ 'validated': [...] }}"
+    return system_msg, user_msg
+
+def create_options_prompt(job, example_banks):
+    return "System", "User"
+
+def create_stem_prompt(job, options):
+    return "System", "User"
+
+def create_holistic_prompt(job, example_banks):
+    return "System", "User"
