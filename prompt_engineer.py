@@ -388,9 +388,20 @@ Look at the **Correct Answer** to determine the rule:
     *   **Action:** REJECT any candidate that has an inflection suffix (-ed, -ing, -s).
     *   *Example:* Target "be" -> REJECT "burned" (Past). REJECT "building" (Gerund). ACCEPT "burn" (Base).
 
-**STEP 2: SEMANTIC & GRAMMATICAL FIT**
-*   **Grammar Check:** For Case A (Inflected), the distractor must fit the sentence grammatically (e.g., "He [verb-ed] the ball").
-*   **Semantic Check:** The distractor must be WRONG in meaning. REJECT valid synonyms that a native speaker might accept.
+**STEP 2: SYNTACTIC & SEMANTIC FIT (The "Fit & Logic" Test)**
+For candidates that pass Step 1, apply these two filters:
+
+*   **A. SYNTACTIC FIT (Grammar Structure):** 
+    Does the word fit the **sentence structure** (prepositions, transitivity, collocations)?
+    *   *Example:* "He ____ me the truth." (Target: told).
+    *   *Test:* "said" -> "He said me..." -> **REJECT** (Syntax error: 'said' cannot take indirect object).
+    *   *Test:* "spoke" -> "He spoke me..." -> **REJECT** (Syntax error: needs 'to').
+
+*   **B. EXAMINER ACCEPTANCE (Semantic Logic):**
+    If a student wrote this answer, would it be **logically acceptable** (even if not the target)?
+    *   *Test:* "We spent the day at the ____." (Target: beach).
+    *   *Candidate:* "college". -> "We spent the day at the college." -> **REJECT** (Logically valid = Bad Distractor).
+    *   *Candidate:* "decision". -> "We spent the day at the decision." -> **ACCEPT** (Grammatically fits, but logically absurd).
 
 **STEP 3: FINAL SELECTION**
 *   Select the 3 candidates that survive Step 1 & 2.
