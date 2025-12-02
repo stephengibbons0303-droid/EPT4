@@ -383,9 +383,10 @@ Look at the **Correct Answer** to determine the rule:
     *   **Action:** REJECT any candidate that is a different part of speech or lacks the matching inflection.
     *   *Example:* Target "blew" (Past V) -> REJECT "house" (Noun). REJECT "blow" (Base V). ACCEPT "cooked" (Past V).
 
-*   **CASE B: The Correct Answer is BASE FORM** (e.g., "walk", "table", "big").
-    *   **RULE:** LOOSE PARITY. Distractors can be different word classes.
-    *   **Action:** RETAIN candidates from different word classes (e.g., nouns acting as distractors for verbs) as long as they are valid words.
+*   **CASE B: The Correct Answer is BASE FORM** (e.g., "walk", "table", "big", "be").
+    *   **RULE:** BASE PARITY. Distractors can be different word classes, BUT MUST BE BASE FORM.
+    *   **Action:** REJECT any candidate that has an inflection suffix (-ed, -ing, -s).
+    *   *Example:* Target "be" -> REJECT "burned" (Past). REJECT "building" (Gerund). ACCEPT "burn" (Base).
 
 **STEP 2: SEMANTIC & GRAMMATICAL FIT**
 *   **Grammar Check:** For Case A (Inflected), the distractor must fit the sentence grammatically (e.g., "He [verb-ed] the ball").
