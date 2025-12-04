@@ -892,9 +892,10 @@ with tab4:
             )
         
         with col2:
+            # UPDATED: Changed "ConceptID range" to "Row Range" to fix sorting bug
             batch_selection_mode = st.radio(
                 "Batch Selection Method",
-                ("First N items", "ConceptID range"),
+                ("First N items", "Row Range"),
                 key="batch_mode"
             )
             
@@ -907,19 +908,27 @@ with tab4:
                     key="vocab_batch_size"
                 )
             else:
+                # NEW LOGIC: Use Number Inputs for Row Indices
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    start_concept_id = st.text_input(
-                        "Start ConceptID",
-                        placeholder="e.g., 12-1-V-1-i",
-                        key="start_concept_id"
+                    start_row = st.number_input(
+                        "Start Row Index",
+                        min_value=0,
+                        max_value=len(vocab_df)-1,
+                        value=0,
+                        key="start_row_index"
                     )
                 with col_b:
-                    end_concept_id = st.text_input(
-                        "End ConceptID",
-                        placeholder="e.g., 12-1-V-10-i",
-                        key="end_concept_id"
+                    # Default to 10 items, capped at max length
+                    default_end = min(start_row + 10, len(vocab_df))
+                    end_row = st.number_input(
+                        "End Row Index",
+                        min_value=start_row + 1,
+                        max_value=len(vocab_df),
+                        value=default_end,
+                        key="end_row_index"
                     )
+                st.caption(f"Selecting {end_row - start_row} items (Rows {start_row} to {end_row})")
         
         st.divider()
         
@@ -931,13 +940,12 @@ with tab4:
             if batch_selection_mode == "First N items":
                 selected_vocab = vocab_df.head(num_items).copy()
             else:
-                if start_concept_id and end_concept_id:
-                    # Filter by ConceptID range
-                    mask = (vocab_df['ConceptID'] >= start_concept_id) & (vocab_df['ConceptID'] <= end_concept_id)
-                    selected_vocab = vocab_df[mask].copy()
-                    
-                    if len(selected_vocab) == 0:
-                        st.error("No vocabulary items found in the specified ConceptID range.")
+                # NEW LOGIC: Use .iloc to slice by row number
+                # This guarantees we get exactly the rows requested, ignoring ID sorting
+                selected_vocab = vocab_df.iloc[start_row:end_row].copy()
+                
+                if len(selected_vocab) == 0:
+                    st.error("Invalid selection range.")
                 else:
                     st.error("Please enter both Start and End ConceptID values.")
             
