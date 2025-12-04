@@ -16,14 +16,13 @@ st.set_page_config(
     page_title="Agentic Test Generator - NEW ARCHITECTURE",
     layout="centered"
 )
+
 # --- AIMLAPI CONFIGURATION ---
-# 1. DEFINE CONSTANTS
 API_BASE_URL = "https://api.aimlapi.com/"
-# IMPORTANT: Verify this Model ID in your AIMLAPI dashboard. 
-# It is often "claude-3-5-sonnet-20240620" or similar. 
-# If "claude-4.5-opus" is the exact ID supported, keep it.
-MODEL_NAME = "claude-4.5-opus" 
-# Load the key from Streamlit secrets
+# UPDATED: Set to Opus 4.5
+MODEL_NAME = "claude-opus-4-5"
+
+# 2. LOAD KEY FROM SECRETS
 try:
     user_api_key = st.secrets["ANTHROPIC_API_KEY"]
 except Exception:
