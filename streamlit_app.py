@@ -19,9 +19,9 @@ st.set_page_config(
 
 # Load the key from Streamlit secrets
 try:
-    user_api_key = st.secrets["OPENAI_API_KEY"]
+    user_api_key = st.secrets["ANTHROPIC_API_KEY"]
 except Exception:
-    st.error("❌ OpenAI API Key not found in Secrets. Please add it to your Streamlit Cloud settings.")
+    st.error("❌ ANTHROPIC_API_KEY not found in Secrets. Please add it to your Streamlit Cloud settings.")
     st.stop()
     
 # Custom CSS (same as original)
@@ -386,12 +386,9 @@ with tab1:
             key="cefr"
         )
 
-        strategy = st.selectbox(
-            "Generation Strategy",
-            ("Sequential Batch (3-Call)", "Holistic (1-Call)", "Segmented (2-Call)"),
-            help="Sequential Batch: New architecture with validation filtering. Holistic: Fast single-call. Segmented: Options first, then stem.",
-            key="strategy"
-        )
+        # Removed Strategy Selector - Hardcoded to Sequential Batch
+        st.info("Strategy: Sequential Batch (3-Stage Architecture)")
+        strategy = "Sequential Batch (3-Call)"
 
         batch_size = st.selectbox(
             "Batch Size",
