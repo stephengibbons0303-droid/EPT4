@@ -17,16 +17,15 @@ st.set_page_config(
     layout="centered"
 )
 
-# --- AIMLAPI CONFIGURATION ---
-API_BASE_URL = "https://api.aimlapi.com/"
-# UPDATED: Set to Opus 4.5
-MODEL_NAME = "claude-opus-4-5"
+# --- OPENAI CONFIGURATION ---
+# We don't need a custom base URL for standard OpenAI
+MODEL_NAME = "gpt-4o" 
 
 # 2. LOAD KEY FROM SECRETS
 try:
-    user_api_key = st.secrets["ANTHROPIC_API_KEY"]
+    user_api_key = st.secrets["OPENAI_API_KEY"]
 except Exception:
-    st.error("❌ ANTHROPIC_API_KEY not found in Secrets. Please add your AIMLAPI Key there.")
+    st.error("❌ OPENAI_API_KEY not found in Secrets. Please add it to your Streamlit Cloud settings.")
     st.stop()
     
 # Custom CSS (same as original)
