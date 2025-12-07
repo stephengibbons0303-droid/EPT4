@@ -596,34 +596,9 @@ with tab1:
                                     st.session_state.debug_logs.append(f"\nTOTAL ASSEMBLED: {len(generated_questions)}")
                                     break
                                 
-                            elif job['strategy'] == "Segmented (2-Call)":
-                                sys_msg_1, user_msg_1 = prompt_engineer.create_options_prompt(job, example_banks)
-                                raw_options = llm_service.call_llm([sys_msg_1, user_msg_1], user_api_key)
-                                options_data, options_error = output_formatter.parse_response(raw_options)
-                                
-                                if options_error:
-                                    st.error(f"Job {job['job_id']} Failed at Options: {options_error}")
-                                    continue
-                                
-                                options_json_string = json.dumps(options_data)
-                                sys_msg_2, user_msg_2 = prompt_engineer.create_stem_prompt(job, options_json_string)
-                                raw_response = llm_service.call_llm([sys_msg_2, user_msg_2], user_api_key)
-                                question_data, error = output_formatter.parse_response(raw_response)
-                                
-                                if error:
-                                    st.error(f"Job {job['job_id']} Failed: {error}")
-                                else:
-                                    generated_questions.append(question_data)
-                                    
-                            else:  # Holistic
-                                sys_msg, user_msg = prompt_engineer.create_holistic_prompt(job, example_banks)
-                                raw_response = llm_service.call_llm([sys_msg, user_msg], user_api_key)
-                                question_data, error = output_formatter.parse_response(raw_response)
-                                
-                                if error:
-                                    st.error(f"Job {job['job_id']} Failed: {error}")
-                                else:
-                                    generated_questions.append(question_data)
+                            else:
+                                # Fallback or error if unknown strategy
+                                st.error(f"Unknown strategy for job {job['job_id']}: {job['strategy']}")
 
                             progress_bar.progress((index + 1) / len(job_list))
                         
