@@ -784,8 +784,12 @@ with tab4:
         # ADD THESE LINES HERE (before file uploader):
     if 'uploaded_vocab_df' not in st.session_state:
         st.session_state.uploaded_vocab_df = None
+    if 'uploaded_vocab_df' not in st.session_state:
+        st.session_state.uploaded_vocab_df = None
     if 'last_uploaded_file_id' not in st.session_state:
         st.session_state.last_uploaded_file_id = None
+    if 'generated_vocab_questions' not in st.session_state: # NEW: Persist generated questions
+        st.session_state.generated_vocab_questions = None
         
     # File upload section
     st.subheader("1. Upload Vocabulary List")
@@ -1107,27 +1111,15 @@ with tab4:
                             
                             vocab_questions_df = pd.DataFrame(vocab_questions)
                             
-                            # Display results with highlighting
-                            st.subheader("Generated Questions")
-                            # UPDATED: Allow editing
-                            edited_vocab_df = st.data_editor(vocab_questions_df, use_container_width=True, key=f"vocab_editor_{len(vocab_questions)}")
-                            
-                            # Download button uses EDITED dataframe
-                            csv_output = edited_vocab_df.to_csv(index=False).encode('utf-8')
-                            st.download_button(
-                                label="📥 Download Vocabulary Questions CSV",
-                                data=csv_output,
-                                file_name=f"vocab_questions_{vocab_cefr}_{len(vocab_questions)}items.csv",
-                                mime="text/csv",
-                            )
-                            
-                            # Generation summary
-                            with st.expander("Generation Summary", expanded=False):
-                                st.write(f"**CEFR Level:** {vocab_cefr}")
-                                st.write(f"**Question Form:** {question_form}")
-                                st.write(f"**Definitions Used:** {'Yes' if use_definitions else 'No'}")
-                                st.write(f"**Total Questions:** {len(vocab_questions)}")
-                                st.write(f"**Success Rate:** {len(vocab_questions)}/{len(selected_vocab)} ({100*len(vocab_questions)/len(selected_vocab):.1f}%)")
+                            # STORE IN SESSION STATE instead of displaying immediately
+                            st.session_state.generated_vocab_questions = {
+                                'df': vocab_questions_df,
+                                'cefr': vocab_cefr,
+                                'count': len(vocab_questions),
+                                'total': len(selected_vocab),
+                                'form': question_form,
+                                'use_def': use_definitions
+                            }
                         
                     except Exception as e:
                         st.session_state.debug_logs.append(f"\nCRITICAL EXCEPTION: {str(e)}")
@@ -1137,3 +1129,37 @@ with tab4:
                         with st.expander("🔍 DEBUG: Exception Details", expanded=True):
                             st.error(str(e))
                             st.code(traceback.format_exc())
+
+        # MOVE DISPLAY LOGIC OUTSIDE THE BUTTON BLOCK
+        if st.session_state.generated_vocab_questions is not None:
+            data = st.session_state.generated_vocab_questions
+            vocab_questions_df = data['df']
+            
+            # Display results with highlighting
+            st.divider()
+            st.subheader("Generated Questions")
+            
+            # UPDATED: Allow editing
+            # Use data_editor with key to maintain state during interaction
+            edited_vocab_df = st.data_editor(
+                vocab_questions_df, 
+                use_container_width=True, 
+                key="vocab_editor_persistent" # Fixed key for persistence
+            )
+            
+            # Download button uses EDITED dataframe
+            csv_output = edited_vocab_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Vocabulary Questions CSV",
+                data=csv_output,
+                file_name=f"vocab_questions_{data['cefr']}_{data['count']}items.csv",
+                mime="text/csv",
+            )
+            
+            # Generation summary
+            with st.expander("Generation Summary", expanded=False):
+                st.write(f"**CEFR Level:** {data['cefr']}")
+                st.write(f"**Question Form:** {data['form']}")
+                st.write(f"**Definitions Used:** {'Yes' if data['use_def'] else 'No'}")
+                st.write(f"**Total Questions:** {data['count']}")
+                st.write(f"**Success Rate:** {data['count']}/{data['total']} ({100*data['count']/data['total']:.1f}%)")
