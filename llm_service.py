@@ -1,18 +1,21 @@
 from openai import OpenAI
 
-# UPDATED: Using the exact ID from your error log for Opus 4.5
-DEFAULT_MODEL = "claude-opus-4-5"
-DEFAULT_BASE_URL = "https://api.aimlapi.com/v1"
+# Standard OpenAI Default
+DEFAULT_MODEL = "gpt-4o" 
 
-def call_llm(messages, api_key, model=DEFAULT_MODEL, base_url=DEFAULT_BASE_URL, max_tokens=4096):
+def call_llm(messages, api_key, model=DEFAULT_MODEL, base_url=None, max_tokens=4096):
+    """
+    Sends a message history to the OpenAI API.
+    """
     if not api_key:
-        return "Error: API Key is missing."
+        return "Error: API Key is missing. Please enter it in the sidebar."
 
     try:
-        if not base_url.endswith("/v1"):
-            base_url = f"{base_url.rstrip('/')}/v1"
-
-        client = OpenAI(api_key=api_key, base_url=base_url)
+        # Standard OpenAI Client (no base_url needed unless using a proxy)
+        if base_url:
+            client = OpenAI(api_key=api_key, base_url=base_url)
+        else:
+            client = OpenAI(api_key=api_key)
         
         response = client.chat.completions.create(
             model=model,
@@ -21,7 +24,9 @@ def call_llm(messages, api_key, model=DEFAULT_MODEL, base_url=DEFAULT_BASE_URL, 
                 {"role": "user", "content": messages[1]}
             ],
             temperature=0.7,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            # OpenAI specific flag to force valid JSON
+            response_format={"type": "json_object"}
         )
         return response.choices[0].message.content
         
