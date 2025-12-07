@@ -1109,10 +1109,11 @@ with tab4:
                             
                             # Display results with highlighting
                             st.subheader("Generated Questions")
-                            st.dataframe(vocab_questions_df, use_container_width=True)
+                            # UPDATED: Allow editing
+                            edited_vocab_df = st.data_editor(vocab_questions_df, use_container_width=True, key=f"vocab_editor_{len(vocab_questions)}")
                             
-                            # Download button
-                            csv_output = vocab_questions_df.to_csv(index=False).encode('utf-8')
+                            # Download button uses EDITED dataframe
+                            csv_output = edited_vocab_df.to_csv(index=False).encode('utf-8')
                             st.download_button(
                                 label="📥 Download Vocabulary Questions CSV",
                                 data=csv_output,
