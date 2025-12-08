@@ -910,8 +910,13 @@ with tab5:
                         grammar_job_list = []
                         for idx, row in selected_grammar.iterrows():
                             concept_id = row.get('ConceptID', f"G-{idx}")
-                            base_grammar = row.get('Base Grammar Item', '').strip()
-                            subtype = row.get('Grammar Subtype', '').strip()
+                            
+                            # Safe string conversion to handle NaN/float values
+                            base_grammar_val = row.get('Base Grammar Item', '')
+                            base_grammar = str(base_grammar_val).strip() if pd.notna(base_grammar_val) else ''
+                            
+                            subtype_val = row.get('Grammar Subtype', '')
+                            subtype = str(subtype_val).strip() if pd.notna(subtype_val) else ''
                             
                             if not base_grammar:
                                 continue
