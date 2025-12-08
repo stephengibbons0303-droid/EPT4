@@ -357,7 +357,7 @@ if 'file_upload_processed' not in st.session_state:
 if 'uploaded_vocab_df' not in st.session_state:
     st.session_state.uploaded_vocab_df = None
     
-tab1, tab2, tab3, tab4 = st.tabs(["🚀 Generator", "🔧 Refinement Workshop", "🐛 Debug Logs", "📚 Vocabulary List Generator"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚀 Generator", "🔧 Refinement Workshop", "🐛 Debug Logs", "📚 Vocabulary List Generator", "📐 Grammar List Generator"])
 
 # =============================
 # TAB 1: GENERATOR
@@ -774,9 +774,262 @@ with tab3:
     if st.button("Clear Debug Logs"):
         st.session_state.debug_logs = []
         st.rerun()
+
 # =============================
-# TAB 4: VOCABULARY LIST GENERATOR (UPDATED WITH COLUMN VALIDATION)
+# TAB 5: GRAMMAR LIST GENERATOR (NEW)
 # =============================
+with tab5:
+    st.header("📐 Grammar List Generator")
+    st.caption("Upload a grammar list CSV and generate questions for specific structures")
+    
+    if 'uploaded_grammar_df' not in st.session_state:
+        st.session_state.uploaded_grammar_df = None
+    if 'last_uploaded_grammar_id' not in st.session_state:
+        st.session_state.last_uploaded_grammar_id = None
+    if 'generated_grammar_questions' not in st.session_state:
+        st.session_state.generated_grammar_questions = None
+        
+    # File upload section
+    st.subheader("1. Upload Grammar List")
+    grammar_csv_file = st.file_uploader(
+        "Upload your grammar CSV file",
+        type="csv",
+        help="CSV must contain: ConceptID, Base Grammar Item, Grammar Subtype",
+        key="grammar_csv_upload"
+    )
+    
+    if grammar_csv_file is not None:
+        file_id = f"{grammar_csv_file.name}_{grammar_csv_file.size}"
+        
+        if st.session_state.last_uploaded_grammar_id != file_id:
+            try:
+                grammar_df = pd.read_csv(grammar_csv_file)
+                st.session_state.uploaded_grammar_df = grammar_df
+                st.session_state.last_uploaded_grammar_id = file_id
+                
+                # VALIDATE REQUIRED COLUMNS
+                required_columns = ['ConceptID', 'Base Grammar Item', 'Grammar Subtype']
+                missing_columns = [col for col in required_columns if col not in grammar_df.columns]
+                
+                if missing_columns:
+                    st.error(f"Missing required columns: {', '.join(missing_columns)}")
+                    st.info("Your CSV must include: ConceptID, Base Grammar Item, Grammar Subtype")
+                    st.session_state.uploaded_grammar_df = None
+                else:
+                    st.success(f"✓ Loaded {len(grammar_df)} grammar items")
+            except Exception as e:
+                st.error(f"Error reading CSV: {e}")
+                st.session_state.uploaded_grammar_df = None
+                
+    grammar_df = st.session_state.uploaded_grammar_df
+    
+    if grammar_df is not None:
+        st.divider()
+        
+        st.subheader("2. Configure Generation Settings")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            grammar_cefr = st.selectbox(
+                "CEFR Level",
+                ("A1", "A2", "B1", "B2", "C1"),
+                key="grammar_cefr"
+            )
+            
+            question_form_g = st.selectbox(
+                "Question Form",
+                (
+                    "Random Mix",
+                    "Simple gap fill",
+                    "Dialogue completion",
+                    "Error identification",
+                    "Sentence transformation"
+                ),
+                key="question_form_g"
+            )
+            
+        with col2:
+            batch_selection_mode_g = st.radio(
+                "Batch Selection Method",
+                ("First N items", "Row Range"),
+                key="batch_mode_g"
+            )
+            
+            if batch_selection_mode_g == "First N items":
+                num_items_g = st.number_input(
+                    "Number of items to generate",
+                    min_value=1,
+                    max_value=len(grammar_df),
+                    value=min(10, len(grammar_df)),
+                    key="grammar_batch_size"
+                )
+            else:
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    start_row_g = st.number_input(
+                        "Start Row (1 = First Item)",
+                        min_value=1,
+                        max_value=len(grammar_df),
+                        value=1,
+                        key="start_row_index_g"
+                    )
+                with col_b:
+                    default_end_g = min(start_row_g + 9, len(grammar_df))
+                    end_row_g = st.number_input(
+                        "End Row (Inclusive)",
+                        min_value=start_row_g,
+                        max_value=len(grammar_df),
+                        value=default_end_g,
+                        key="end_row_index_g"
+                    )
+                st.caption(f"Selecting {end_row_g - start_row_g + 1} items")
+
+        st.divider()
+        
+        if st.button("Generate Grammar Questions", type="primary", use_container_width=True):
+            selected_grammar = None
+            
+            if batch_selection_mode_g == "First N items":
+                selected_grammar = grammar_df.head(num_items_g).copy()
+            else:
+                # 1-based indexing conversion: start_row-1 because iloc is 0-based
+                # end_row is inclusive in user mind, but iloc slice end is exclusive
+                # So we want [start-1 : end]
+                # Example: User asks for Row 1 to 1. 0-based index 0. Slice is 0:1.
+                selected_grammar = grammar_df.iloc[start_row_g-1 : end_row_g].copy()
+                
+            if selected_grammar is not None and len(selected_grammar) > 0:
+                st.info(f"Generating questions for {len(selected_grammar)} grammar items...")
+                
+                with st.expander("Selected Grammar Items", expanded=True):
+                    st.dataframe(selected_grammar[['ConceptID', 'Base Grammar Item', 'Grammar Subtype']], use_container_width=True)
+                
+                with st.spinner(f"Processing {len(selected_grammar)} items..."):
+                    try:
+                        grammar_job_list = []
+                        for idx, row in selected_grammar.iterrows():
+                            concept_id = row.get('ConceptID', f"G-{idx}")
+                            base_grammar = row.get('Base Grammar Item', '').strip()
+                            subtype = row.get('Grammar Subtype', '').strip()
+                            
+                            if not base_grammar:
+                                continue
+                                
+                            job = {
+                                "job_id": concept_id,
+                                "type": "Grammar List",
+                                "cefr": grammar_cefr,
+                                "base_grammar": base_grammar,
+                                "subtype": subtype,
+                                "strategy": "Sequential Batch (3-Call)"
+                            }
+                            grammar_job_list.append(job)
+                            
+                        if not grammar_job_list:
+                            st.error("No valid grammar items found.")
+                            st.stop()
+                            
+                        # Import prompts
+                        from prompt_engineer import (
+                            create_grammar_list_stage1_prompt,
+                            create_grammar_list_stage2_prompt,
+                            create_grammar_list_stage3_prompt
+                        )
+                        
+                        # STAGE 1
+                        sys_msg_1, user_msg_1 = create_grammar_list_stage1_prompt(grammar_job_list, question_form_g)
+                        raw_stage1 = llm_service.call_llm([sys_msg_1, user_msg_1], user_api_key)
+                        stage1_data, _ = output_formatter.parse_response(raw_stage1)
+                        if isinstance(stage1_data, dict) and "questions" in stage1_data:
+                            stage1_data_list = stage1_data["questions"]
+                        else:
+                            stage1_data_list, _ = output_formatter.extract_array_from_response(stage1_data)
+                            
+                        if not stage1_data_list: # Error handling
+                             st.error("Stage 1 failed to return questions.")
+                             st.stop()
+
+                        # STAGE 2
+                        sys_msg_2, user_msg_2 = create_grammar_list_stage2_prompt(grammar_job_list, stage1_data_list)
+                        raw_stage2 = llm_service.call_llm([sys_msg_2, user_msg_2], user_api_key)
+                        stage2_data, _ = output_formatter.parse_response(raw_stage2)
+                        
+                        if isinstance(stage2_data, dict) and "candidates" in stage2_data:
+                            stage2_data_list = stage2_data["candidates"]
+                        else:
+                            stage2_data_list, _ = output_formatter.extract_array_from_response(stage2_data)
+
+                        # STAGE 3
+                        sys_msg_3, user_msg_3 = create_grammar_list_stage3_prompt(grammar_job_list, stage1_data_list, stage2_data_list)
+                        raw_stage3 = llm_service.call_llm([sys_msg_3, user_msg_3], user_api_key)
+                        stage3_data, _ = output_formatter.parse_response(raw_stage3)
+                        
+                        if isinstance(stage3_data, dict) and "validated" in stage3_data:
+                            stage3_data_list = stage3_data["validated"]
+                        else:
+                            stage3_data_list, _ = output_formatter.extract_array_from_response(stage3_data)
+                            
+                        # ASSEMBLY
+                        grammar_questions = []
+                        for i in range(len(stage1_data_list)):
+                             if i < len(stage3_data_list) and i < len(selected_grammar):
+                                s1 = stage1_data_list[i]
+                                s3 = stage3_data_list[i]
+                                row = selected_grammar.iloc[i]
+                                
+                                complete = s1.get("Complete Sentence", "")
+                                answer = s1.get("Correct Answer", "")
+                                prompt = complete.replace(answer, "____")
+                                
+                                q = {
+                                    "ConceptID": row.get('ConceptID', ''),
+                                    "Base Grammar Item": row.get('Base Grammar Item', ''),
+                                    "Subtype": row.get('Grammar Subtype', ''),
+                                    "Question Prompt": prompt,
+                                    "Answer A": answer,
+                                    "Answer B": s3.get("Selected Distractor A", ""),
+                                    "Answer C": s3.get("Selected Distractor B", ""),
+                                    "Answer D": s3.get("Selected Distractor C", ""),
+                                    "Correct Answer": "A"
+                                }
+                                grammar_questions.append(q)
+                                
+                        if grammar_questions:
+                            st.success(f"Generated {len(grammar_questions)} grammar questions!")
+                            
+                            st.session_state.generated_grammar_questions = {
+                                'df': pd.DataFrame(grammar_questions),
+                                'cefr': grammar_cefr,
+                                'count': len(grammar_questions),
+                                'total': len(selected_grammar)
+                            }
+                            
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+
+    # Persistent Display outside button
+    if st.session_state.generated_grammar_questions is not None:
+        g_data = st.session_state.generated_grammar_questions
+        
+        st.divider()
+        st.subheader("Generated Grammar Questions")
+        
+        edited_g_df = st.data_editor(
+            g_data['df'],
+            use_container_width=True,
+            key="grammar_editor_persistent"
+        )
+        
+        csv_g = edited_g_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Grammar Questions CSV",
+            data=csv_g,
+            file_name=f"grammar_questions_{g_data['cefr']}_{g_data['count']}items.csv",
+            mime="text/csv"
+        )
 with tab4:
     st.header("📚 Vocabulary List Generator")
     st.caption("Upload a vocabulary list CSV and generate questions for specific target words")
@@ -890,23 +1143,23 @@ with tab4:
                 col_a, col_b = st.columns(2)
                 with col_a:
                     start_row = st.number_input(
-                        "Start Row Index",
-                        min_value=0,
-                        max_value=len(vocab_df)-1,
-                        value=0,
+                        "Start Row (1 = First Item)",
+                        min_value=1,
+                        max_value=len(vocab_df),
+                        value=1,
                         key="start_row_index"
                     )
                 with col_b:
                     # Default to 10 items, capped at max length
-                    default_end = min(start_row + 10, len(vocab_df))
+                    default_end = min(start_row + 9, len(vocab_df))
                     end_row = st.number_input(
-                        "End Row Index",
-                        min_value=start_row + 1,
+                        "End Row (Inclusive)",
+                        min_value=start_row,
                         max_value=len(vocab_df),
                         value=default_end,
                         key="end_row_index"
                     )
-                st.caption(f"Selecting {end_row - start_row} items (Rows {start_row} to {end_row})")
+                st.caption(f"Selecting {end_row - start_row + 1} items")
         
         st.divider()
         
@@ -918,14 +1171,15 @@ with tab4:
             if batch_selection_mode == "First N items":
                 selected_vocab = vocab_df.head(num_items).copy()
             else:
-                # NEW LOGIC: Use .iloc to slice by row number
-                # This guarantees we get exactly the rows requested, ignoring ID sorting
-                selected_vocab = vocab_df.iloc[start_row:end_row].copy()
+                # NEW LOGIC: Use .iloc to slice by row number (1-based from user input)
+                # User says "Row 1", we want index 0. user says "Row 1 to 1", we want 0:1
+                selected_vocab = vocab_df.iloc[start_row-1 : end_row].copy()
                 
                 if len(selected_vocab) == 0:
                     st.error("Invalid selection range.")
                 else:
-                    st.error("Please enter both Start and End ConceptID values.")
+                   # No error needed here
+                   pass
             
             if selected_vocab is not None and len(selected_vocab) > 0:
                 st.info(f"Generating questions for {len(selected_vocab)} vocabulary items...")

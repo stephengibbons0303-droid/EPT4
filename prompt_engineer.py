@@ -639,3 +639,170 @@ def create_stem_prompt(job, options):
 
 def create_holistic_prompt(job, example_banks):
     return "System", "User"
+
+# =============================================================================
+# TAB 5: GRAMMAR LIST GENERATION (New)
+# =============================================================================
+
+def create_grammar_list_stage1_prompt(job_list, question_form):
+    """
+    Generates complete sentences focusing on specific grammar points.
+    """
+    question_form_instructions = {
+        "Random Mix": "Use diverse question forms.",
+        "Simple gap fill": "ALL questions must use simple gap fill format via a blank line.",
+        "Dialogue completion": "ALL questions must use dialogue completion format.",
+        "Error identification": "Create a sentence with an error related to the grammar point (if applicable type).",
+        "Sentence transformation": "Provide a sentence and a keyword to transform it."
+    }
+    
+    # Default to gap fill if not specified or complex
+    form_instruction = question_form_instructions.get(question_form, question_form_instructions["Simple gap fill"])
+    
+    system_msg = f"""You are an expert ELT content creator. You will generate exactly {len(job_list)} complete test questions in a single JSON response targeting specific grammar items.
+
+CRITICAL: Your entire response must be a JSON object with a "questions" key containing an array of exactly {len(job_list)} question objects."""
+    
+    job_specs = []
+    for job in job_list:
+        job_specs.append({
+            "job_id": job['job_id'],
+            "cefr": job['cefr'],
+            "base_grammar_item": job['base_grammar'],
+            "grammar_subtype": job.get('subtype', ''),
+        })
+ 
+    user_msg = f"""
+TASK: Create exactly {len(job_list)} grammar test questions.
+
+GRAMMAR TARGETS:
+{json.dumps(job_specs, indent=2)}
+
+{form_instruction}
+
+GENERATION INSTRUCTIONS:
+1. **CONTEXT:** Create a natural sentence that REQUIRES the specific "Base Grammar Item" and "Subtype".
+2. **TARGET FOCUS:** The "Correct Answer" must be the specific grammar structure requested.
+   - Example Target: "Present Perfect" + "For"
+   - Sentence: "I have lived here ____ ten years."
+   - Correct Answer: "for"
+3. **CLARITY:** Ensure the context makes the answer unambiguous.
+
+MANDATORY OUTPUT FORMAT:
+{{
+  "questions": [
+    {{
+      "Item Number": "...",
+      "Target Grammar": "...",
+      "Subtype": "...",
+      "Complete Sentence": "...",
+      "Correct Answer": "...",
+      "Context Explaination": "...",
+      "CEFR rating": "...",
+      "Category": "Grammar"
+    }},
+    ... 
+  ]
+}}
+"""
+    return system_msg, user_msg
+
+def create_grammar_list_stage2_prompt(job_list, stage1_outputs):
+    """
+    Generates distractors for Grammar List items.
+    """
+    system_msg = f"""You are an expert ELT test designer. You will create exactly 4 candidate distractors for exactly {len(job_list)} grammar questions in JSON format."""
+    
+    pre_selected_data = []
+    
+    for i, job in enumerate(job_list):
+        stage1_data = stage1_outputs[i]
+        
+        pre_selected_data.append({
+            "Item Number": stage1_data.get("Item Number"),
+            "Target Grammar": job['base_grammar'],
+            "Subtype": job.get('subtype', ''),
+            "Complete Sentence": stage1_data.get("Complete Sentence"),
+            "Correct Answer": stage1_data.get("Correct Answer")
+        })
+    
+    user_msg = f"""
+TASK: Create a pool of exactly 4 candidate distractors for each question.
+OUTPUT FORMAT: JSON
+
+INPUT DATA:
+{json.dumps(pre_selected_data, indent=2)}
+
+INSTRUCTIONS FOR DISTRACTOR GENERATION:
+1. **COMMON ERRORS:** Focus on common learner mistakes for the specific CEFR level and grammar point.
+2. **PLAUSIBILITY:** Distractors should look grammatically possible but be incorrect in the specific context.
+3. **RANGE:** 
+   - Include wrong tenses.
+   - Include wrong prepositions.
+   - Include L1 interference errors if common.
+
+MANDATORY OUTPUT FORMAT:
+{{
+  "candidates": [
+    {{
+      "Item Number": "...",
+      "Candidate A": "...",
+      "Candidate B": "...",
+      "Candidate C": "...",
+      "Candidate D": "...",
+      "Distractor Notes": "e.g. Incorrect tense 'have went'"
+    }},
+    ... 
+  ]
+}}
+"""
+    return system_msg, user_msg
+
+def create_grammar_list_stage3_prompt(job_list, stage1_outputs, stage2_outputs):
+    """
+    Validates Grammar List distractors.
+    """
+    system_msg = f"""You are an expert English grammar validator. You will filter candidate distractors using strict grammatical rules. Output results in JSON format."""
+    
+    validation_input = []
+    for i, (job, s1, s2) in enumerate(zip(job_list, stage1_outputs, stage2_outputs)):
+        candidates = []
+        if isinstance(s2, dict):
+            # Try to get candidate fields A-D
+            candidates = [s2.get(f"Candidate {k}", "") for k in "ABCD"]
+            # Filter out empty strings
+            candidates = [c for c in candidates if c]
+        
+        validation_input.append({
+            "Item Number": s1.get("Item Number", ""),
+            "Complete Sentence": s1.get("Complete Sentence", ""),
+            "Correct Answer": s1.get("Correct Answer", ""),
+            "Candidates": candidates
+        })
+    
+    user_msg = f"""
+TASK: Validate candidates and select the final 3 distractors per question.
+OUTPUT FORMAT: JSON
+
+INPUT:
+{json.dumps(validation_input, indent=2)}
+
+VALIDATION PROTOCOL:
+1. **DEFINITELY INCORRECT:** Ensure the distractor is not a valid alternative answer.
+2. **CONTEXTUAL FIT:** The distractor might fit grammatically but be semantically weird (optional), or fit semantically but be grammatically wrong (preferred for grammar tests).
+
+MANDATORY OUTPUT FORMAT:
+{{
+  "validated": [
+    {{
+      "Item Number": "...",
+      "Selected Distractor A": "...",
+      "Selected Distractor B": "...",
+      "Selected Distractor C": "...",
+      "Validation Notes": "..."
+    }},
+    ...
+  ]
+}}
+"""
+    return system_msg, user_msg
